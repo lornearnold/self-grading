@@ -1,5 +1,5 @@
 # IPython
 .ipynb_checkpoints/
 
-# Canvas API key
-API_KEY.txt
+# Private CANVAS configuration file
+config.txt
