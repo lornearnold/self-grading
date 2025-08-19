@@ -5,6 +5,8 @@
 
 import json
 import pandas as pd
+from numpy import argmax
+from itertools import chain
 from canvasapi import Canvas
 from argparse import ArgumentParser
 
@@ -29,18 +31,19 @@ def main():
         # Prompt the user for the API key and Canvas URL and create config.txt
         create_config = input("config.txt not found. Create one? (y/n)")
         if create_config.strip().lower() == 'y':
-            canvas_url = input("Enter your Canvas URL (e.g., https://canvas.institution.edu): ")
-            api_key = input("Enter your Canvas API key: ")
 
-            # Create config.txt
+            # Create empty configuration file
             with open("config.txt", "w") as f:
-                json.dump({"api_key": api_key,
-                        "canvas_url": canvas_url,
-                        "submission_suffix": "submit your work",
-                        "score_suffix": "grade your work",
-                        "final_suffix": "final grade"}, f)
+                json.dump({
+                    "api_key": "ENTER YOUR API KEY",
+                    "canvas_url": "https://canvas.yourinstitution.edu",
+                    "course_id": 123,
+                    "submission_suffix": "submit your work",
+                    "score_suffix": "grade your work",
+                    "final_suffix": "final grade",
+                    "problem_prefix": "Problem"}, f)
         else:
-            print("Configuration not created.")
+            print("Exiting.")
             return
     except Exception as e:
         print(f"Error reading config.txt: {e}")
@@ -49,8 +52,14 @@ def main():
     # Create Canvas connection
     canvas = Canvas(canvas_url, api_key)
 
-    # Prompt for course ID if not provided
-    if not args.course_id:
+    # Select Canvas course
+    if args.course_id:
+        print("Course ID from command line arg")
+        course = canvas.get_course(args.course_id)
+    elif "course_id" in config:
+        print("Course ID from config")
+        course = canvas.get_course(config["course_id"])
+    else:
         # Search for course by name
         course_name = input("Enter part of the Canvas course name: ")
 
@@ -72,9 +81,6 @@ def main():
         else:
             print("No matching courses found.")
             return
-
-    else:
-        course = canvas.get_course(args.course_id)
 
     print(f"Selected course: {course.name}")
 
@@ -101,7 +107,6 @@ def main():
         else:
             print("No matching assignments found.")
             return
-
     else:
         assignment = course.get_assignment(args.assignment_id)
 
@@ -123,10 +128,10 @@ def main():
     
     # Check that student grading assignment exists
     try:
-        a_score = course.get_assignments(search_term=assignment_name + " - " + config["score_suffix"])[0]
-        print(a_score.name, 'exists.')
+        a_self = course.get_assignments(search_term=assignment_name + " - " + config["score_suffix"])[0]
+        print(a_self.name, 'exists.')
     except IndexError as e:
-        print(a_score.name, "does not exist. Please check the assignment name.")
+        print(a_self.name, "does not exist. Please check the assignment name.")
         return
     
     # Check that final grade assignment exists. If not prompt to create one.
@@ -142,11 +147,43 @@ def main():
             })
             print(a_final.name, 'created. You must publish it on Canvas before proceeding.')
         else:
-            return
+            a_final = None
 
     # Fetch scores from Canvas
     if args.fetch:
-        pass
+        # Get point values of quiz questions corresponding to Problems
+        q_probs = course.get_quiz(a_self.quiz_id).get_questions()
+        q_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
+        q_names = {q.id:q.question_name for q in q_probs if config["problem_prefix"] in q.question_name}
+
+        # For each student...
+
+        # Create empty dataframe of students
+
+        q_cols = [[p + " - s", p + " - i"] for p in q_names.values()]
+
+        print(q_cols)
+        #df_scores = pd.DataFrame(columns=['user_id', 'name'] + list(q_names.values()) + ['total_score'])
+        #print(df_scores)
+
+        return
+
+        for user in course.get_users(enrollment_type=['student']):
+
+            # Get self grade submission history (includes all attempts)
+            s = a_self.get_submission(user=user.id, include='submission_history')
+
+            # Get latest submission
+            sh_index = argmax([sh['attempt'] for sh in s.submission_history])
+            sh_latest = s.submission_history[sh_index]
+
+            if 'submission_data' not in sh_latest:
+                # No student grade found
+                print("Error ", user.name, ": No student-submitted grade found.")
+
+                # Log the error
+
+                continue
 
 if __name__ == "__main__":
     main()
