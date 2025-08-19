@@ -10,9 +10,11 @@ from argparse import ArgumentParser
 
 
 def main():
-    parser = ArgumentParser(description="Extract rubric evaluations from Canvas assignments.")
+    parser = ArgumentParser(description="Update Canvas grades for a student-graded assignment.")
     parser.add_argument("-c", "--course_id", help="Canvas course ID", type=int)
     parser.add_argument("-a", "--assignment_id", help="Canvas assignment ID", type=int)
+    parser.add_argument("-f", "--fetch", help="Fetch scores from Canvas", action="store_true")
+    parser.add_argument("-u", "--upload", help="Upload scores to Canvas", action="store_true")
     parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
     args = parser.parse_args()
 
@@ -25,13 +27,21 @@ def main():
             canvas_url = config["canvas_url"]
     except FileNotFoundError:
         # Prompt the user for the API key and Canvas URL and create config.txt
-        print("config.txt not found. Please enter your Canvas API key and URL.")
-        canvas_url = input("Enter your Canvas URL (e.g., https://canvas.institution.edu): ")
-        api_key = input("Enter your Canvas API key: ")
+        create_config = input("config.txt not found. Create one? (y/n)")
+        if create_config.strip().lower() == 'y':
+            canvas_url = input("Enter your Canvas URL (e.g., https://canvas.institution.edu): ")
+            api_key = input("Enter your Canvas API key: ")
 
-        # Create config.txt
-        with open("config.txt", "w") as f:
-            json.dump({"api_key": api_key, "canvas_url": canvas_url}, f)
+            # Create config.txt
+            with open("config.txt", "w") as f:
+                json.dump({"api_key": api_key,
+                        "canvas_url": canvas_url,
+                        "submission_suffix": "submit your work",
+                        "score_suffix": "grade your work",
+                        "final_suffix": "final grade"}, f)
+        else:
+            print("Configuration not created.")
+            return
     except Exception as e:
         print(f"Error reading config.txt: {e}")
         return
@@ -95,8 +105,48 @@ def main():
     else:
         assignment = course.get_assignment(args.assignment_id)
 
-    print(f"Selected assignment: {assignment.name}")
+    # Extract the portion of assignment.name before " - "
+    assignment_name = assignment.name.split(" - ")[0]
 
+    print(f"Selected assignment: {assignment_name}")
+
+    # Check that submission assignment exists
+    try:
+        a_submit = course.get_assignments(search_term=assignment_name + " - " + config["submission_suffix"])[0]
+        print(a_submit.name, 'exists.')
+
+        # Get assignment points
+        total_point_val = a_submit.points_possible
+    except IndexError as e:
+        print(a_submit.name, "does not exist. Please check the assignment name.")
+        return
+    
+    # Check that student grading assignment exists
+    try:
+        a_score = course.get_assignments(search_term=assignment_name + " - " + config["score_suffix"])[0]
+        print(a_score.name, 'exists.')
+    except IndexError as e:
+        print(a_score.name, "does not exist. Please check the assignment name.")
+        return
+    
+    # Check that final grade assignment exists. If not prompt to create one.
+    try:
+        a_final = course.get_assignments(search_term=assignment_name + " - " + config["final_suffix"])[0]
+        print(a_final.name, 'exists.')
+    except IndexError as e:
+        create_final = input(a_final.name, "does not exist. Create it now? (y/n)")
+        if create_final.lower() == 'y':
+            a_final = course.create_assignment({
+                'name': assignment_name + " - " + config["final_suffix"],
+                'points_possible': total_point_val
+            })
+            print(a_final.name, 'created. You must publish it on Canvas before proceeding.')
+        else:
+            return
+
+    # Fetch scores from Canvas
+    if args.fetch:
+        pass
 
 if __name__ == "__main__":
     main()
