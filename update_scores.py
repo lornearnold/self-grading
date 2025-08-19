@@ -17,6 +17,7 @@ def main():
     parser.add_argument("-a", "--assignment_id", help="Canvas assignment ID", type=int)
     parser.add_argument("-f", "--fetch", help="Fetch scores from Canvas", action="store_true")
     parser.add_argument("-u", "--upload", help="Upload scores to Canvas", action="store_true")
+    parser.add_argument("-p", "--check_problem", help="Check Problem name (e.g. 'Problem 3')")
     parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
     args = parser.parse_args()
 
@@ -149,26 +150,47 @@ def main():
         else:
             a_final = None
 
-    # Fetch scores from Canvas
-    if args.fetch:
-        # Get point values of quiz questions corresponding to Problems
-        q_probs = course.get_quiz(a_self.quiz_id).get_questions()
-        q_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
-        q_names = {q.id:q.question_name for q in q_probs if config["problem_prefix"] in q.question_name}
+    # Get point values of quiz questions corresponding to Problems
+    q_probs = course.get_quiz(a_self.quiz_id).get_questions()
+    p_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
+    p_names = {q.id:q.question_name for q in q_probs if config["problem_prefix"] in q.question_name}
 
-        # For each student...
+    # Get Check Problem from arguments, or prompt for input
+    if not args.check_problem:
+        args.check_problem = input('Enter the Check Problem name (e.g. "Problem 3"): ')
 
-        # Create empty dataframe of students
+    # Get the corresponding problem ID
+    check_problem_id = None
+    for p_id, p_name in p_names.items():
+        if args.check_problem.lower() in p_name.lower():
+            check_problem_id = p_id
+            break
 
-        q_cols = [[p + " - s", p + " - i"] for p in q_names.values()]
-
-        print(q_cols)
-        #df_scores = pd.DataFrame(columns=['user_id', 'name'] + list(q_names.values()) + ['total_score'])
-        #print(df_scores)
-
+    if check_problem_id is None:
+        print("No matching Check Problem found. Please check the name and try again.")
         return
 
+    # Fetch scores from Canvas
+    if args.fetch:
+        # Create empty dataframe of student scores
+        p_cols = list(chain.from_iterable([[p + "_s", p + "_i"] for p in p_names.values()]))
+        df_scores = pd.DataFrame(columns=["name", "status"] + p_cols + ["student_score", "final_score"])
+
+        # For each student...
+        i = 0
         for user in course.get_users(enrollment_type=['student']):
+            if i == 5:
+                break
+            else:
+                i += 1
+
+            def log_error(msg):
+                if args.verbose:
+                    print(f"Error for {user.name}: {msg}")
+                    df_scores.loc[user.id, "status"] = msg
+
+            # Create new row for current student
+            df_scores.loc[user.id, "name"] = user.name
 
             # Get self grade submission history (includes all attempts)
             s = a_self.get_submission(user=user.id, include='submission_history')
@@ -177,13 +199,33 @@ def main():
             sh_index = argmax([sh['attempt'] for sh in s.submission_history])
             sh_latest = s.submission_history[sh_index]
 
-            if 'submission_data' not in sh_latest:
-                # No student grade found
-                print("Error ", user.name, ": No student-submitted grade found.")
-
-                # Log the error
-
+            if "submission_data" not in sh_latest:
+                log_error("No student-submitted grade found.")
                 continue
+
+            # Get instructor score
+            x = a_submit.get_submission(user=user.id)
+
+            if x.grade is not None:
+                df_scores.loc[user.id, p_names[check_problem_id] + "_i"] = float(x.grade)
+            else:
+                log_error('No instructor grade found for student')
+
+            # Get student-submitted scores for each problem
+            for q in sh_latest["submission_data"]:    # Loop over quiz questions
+                if q["question_id"] in p_point_vals:  # If Problem
+                    p_name = p_names[q["question_id"]]
+                    student_score = float(q["text"])  # Student's entered score
+                    df_scores.loc[user.id, p_name + "_s"] = student_score
+
+                    if student_score > p_point_vals[q["question_id"]]:
+                        log_error(f"Student entered score greater than maximum for {p_name}.")
+                        continue
+                    if student_score < 0:
+                        log_error(f"Student entered a score less than zero for {p_name}.")
+                        continue
+
+        print(df_scores)
 
 if __name__ == "__main__":
     main()
