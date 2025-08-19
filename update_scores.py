@@ -204,12 +204,15 @@ def main():
                 continue
 
             # Get instructor score
-            x = a_submit.get_submission(user=user.id)
+            inst_evaluation = a_submit.get_submission(user=user.id)
 
-            if x.grade is not None:
-                df_scores.loc[user.id, p_names[check_problem_id] + "_i"] = float(x.grade)
+            if inst_evaluation.grade is not None:
+                df_scores.loc[user.id, p_names[check_problem_id] + "_i"] = float(inst_evaluation.grade)
             else:
                 log_error('No instructor grade found for student')
+
+            student_final_score = 0
+            final_score = 0
 
             # Get student-submitted scores for each problem
             for q in sh_latest["submission_data"]:    # Loop over quiz questions
@@ -225,7 +228,19 @@ def main():
                         log_error(f"Student entered a score less than zero for {p_name}.")
                         continue
 
-        print(df_scores)
+                    student_final_score += student_score
+
+                    if q["question_id"] == check_problem_id:
+                        final_score += float(inst_evaluation.grade)
+                    else:
+                        final_score += student_score
+
+            df_scores.loc[user.id, "student_score"] = student_final_score
+            df_scores.loc[user.id, "final_score"] = final_score
+
+        # Save scores to CSV
+        df_scores.to_csv(f"{assignment_name}_scores.csv")
+
 
 if __name__ == "__main__":
     main()
