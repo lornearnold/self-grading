@@ -2,23 +2,36 @@
 
 A secure, scalable approach to student-graded homework for self-reflection.
 
-Author: Dr. Matthew Ford (mattford@uw.edu) [Website](https://dashdotrobot.com/)
+Author: Dr. Matthew Ford (mattford@uw.edu) ([Website](https://dashdotrobot.com/))
 
 Use this script to compare student self-graded scores to instructor scores and enter final grades into the Canvas gradebook.
 
-## Setup
-1. Obtain a Canvas API key and put it in a text file called "API_KEY.txt" in the same folder as this Python script.
+## Set up a new course
+1. Run this script with no arguments. It will prompt you to create a default configuration file.
+2. Obtain a Canvas API key and enter it in the `api_key` field.
+3. Replace `canvas_url` with your institution's Canvas web address.
+4. Change the other options if desired.
 
-## Creating an assignment
-1. Assign homework on Canvas: Create a zero-point assignment called "Homework X - submit to Gradescope"
-2. Create Gradescope assignment: Create a Gradescope assignment with the correct number of problems. Each problem should have a point value of 0. Link the Gradescope assignment to the Canvas assignment.
-3. Create a Canvas quiz (Classic Quizzes) called "Homework X - enter your own grade". The first "question" should be a text-only question with links to the homework solutions and grading rubrics.
-4. Add a Numerical Answer question for each homework problem. Name each problem "Problem X" where "X" is an integer. Set the "answer" to -1, and set the point value to the correct number. Optionally add a file upload question at the end for students to upload their filled-out rubric.
-5. Set the quiz "Available from" date to just shortly after the homework is due.
+## Create an assignment
+1. Assign homework on Canvas: Create a Canvas assignment with the suffix `submission_suffix`, e.g. "Homework 3 - submit your work". This is the assignment students will use to submit their homework and for you to grade the "check problem". Move this assignment to an Assignment Group worth 0% of the final grade, or select the option "Do not count this assignment towards the final grade" in Canvas.
+2. Create a Canvas quiz (Classic Quizzes) with the suffix `score_suffix`, e.g. "Homework 3 - grade your work". Move this assignment to an Assignment Group worth 0% of the final grade, or select the option "Do not count this assignment towards the final grade" in Canvas.
+3. Add a text-only question with links to the homework solutions and grading rubrics.
+4. Add a Numerical Answer question corresponding to each homework problem. Name each problem "Problem X" where "X" is an integer. Set the "answer" to -1, and set the point value to the number of points you would like the question to be worth. Students should enter their score for each problem here. __Remind students that the "grade" that Canvas calculates for their quiz is irrelevant.__
+5. You may add other questions to the quiz, such as a file-upload question for students to submit their filled-out rubric, or an academic integrity attestation.
+6. Set the quiz "Available from" date to just shortly after the homework is due. This will automatically give students access to the solutions after the homework submission deadline.
 
-## Grading an assignment
-1. Students complete the "Homework X - enter your own grade" assignment on Canvas, entering their numeric score as the "answer" for each question.
-2. Instructors grade the "check problem" on Gradescope and sync grades to Canvas.
-3. After students have submitted their own scores, run the IPython script to compare and synchronize grades. The script will automatically create a new Canvas assignment "Homework X - final grade".
-4. Review the log file and look for significant discrepancies.
-5. When you are ready to post final scores, update `enter_into_gradebook = True` and run the script again.
+## Grade an assignment
+After students have submitted their grades,
+
+1. Choose one problem from the assignment to grade yourself. Enter your score for the "check problem" on the submission assignment (e.g. "Homework X - submit your work"). If you use an external grading tool, like Gradescope, just sync your grades back to the submission assignment in Canvas.
+2. __Fetch scores__: Run this script with the `-f` or `--fetch` option. You can optionally provide the assignment ID and check problem name as command line arguments, otherwise the script will prompt you for a selection.
+3. __Check scores__: Open the newly-created file "Homework X_scores.csv". The script creates two columns for each problem with the suffixes "_s" for the student-entered score, and "_i" for your score (blank for all problems except the check problem). Look for concerning discrepancies. If a student score differs by a small amount, you can leave it alone; the script will replace their score with yours for the check problem when computing the final grade. If a student score differs by a large amount, you may consider reviewing the rest of the student's submission. You can override student scores for any other problem by entering a score into the "_i" column.
+4. Set the `checked` column to TRUE when you have reviewed a student's grade and either found it satisfactory, or made appropriate score adjustments.
+4. Create a Canvas assignment with the suffix `final_suffix`, e.g. "Homework 3 - final grade". Optionally, the script will prompt you to create one if it doesn't exist. Make sure you publish the assignment before proceeding. Make sure this assignment does count towards the student's grade!
+5. __Upload scores__: Run this script again with the `-u` or `--upload` option. This will upload scores to Canvas for all students marked Checked.
+
+## Updating scores
+Depending on your course policy, you may allow students to submit late work, or resubmit assignments. Use this script to update and re-sync scores.
+
+- If scores have previously been fetched, running the script with the `-f` option will check whether there is a new assignment submission and prompt you to erase any instructor scores. You can ignore the prompts and reset all instructor scores with the `-o` or `--overwrite` option.
+- If a new student grade submission is found, the instructor scores will not be cleared, but the `checked` field will be set to False so you can double check the students' newly submitted scores.
