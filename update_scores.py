@@ -153,28 +153,14 @@ def main():
         print(a_self.name, "does not exist. Please check the assignment name.")
         return
     
-    # Get point values of quiz questions corresponding to Problems
-    q_probs = course.get_quiz(a_self.quiz_id).get_questions()
-    p_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
-    p_names = {q.id:q.question_name for q in q_probs if config["problem_prefix"] in q.question_name}
-
-    # Get Check Problem from arguments, or prompt for input
-    if not args.check_problem:
-        args.check_problem = input('Enter the Check Problem name (e.g. "Problem 3"): ')
-
-    # Get the corresponding problem ID
-    check_problem_id = None
-    for p_id, p_name in p_names.items():
-        if args.check_problem.lower() in p_name.lower():
-            check_problem_id = p_id
-            break
-
-    if check_problem_id is None:
-        print("No matching Check Problem found. Please check the name and try again.")
-        return
-
+    
     # Fetch scores from Canvas
     if args.fetch:
+
+        # Extract problems from quiz questions
+        q_probs = course.get_quiz(a_self.quiz_id).get_questions()
+        p_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
+        p_names = {q.id:q.question_name for q in q_probs if config["problem_prefix"] in q.question_name}
 
         # Check for existing scores file
         if os.path.exists(f"{assignment_name}_scores.csv"):
@@ -192,6 +178,22 @@ def main():
                     p_cols + ["student_score", "final_score", "error"])
             df_scores = pd.DataFrame(columns=cols)
             df_scores["checked"] = False
+
+        # Get Check Problem from arguments, or prompt for input
+        if not args.check_problem:
+            args.check_problem = input('Enter the Check Problem name (e.g. "Problem 3"): ')
+
+        # Get the corresponding problem ID
+        check_problem_id = None
+        for p_id, p_name in p_names.items():
+            if args.check_problem.lower() in p_name.lower():
+                check_problem_id = p_id
+                break
+
+        if check_problem_id is None:
+            print("No matching Check Problem found. Please check the name and try again.")
+            return
+
 
         # For each student...
         for user in course.get_users(enrollment_type=['student']):
