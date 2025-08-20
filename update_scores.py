@@ -58,7 +58,7 @@ def main():
                     "submission_suffix": "submit your work",
                     "score_suffix": "grade your work",
                     "final_suffix": "final grade",
-                    "problem_prefix": "Problem"}, f)
+                    "problem_prefix": "Problem"}, f, indent=4)
                 print("config.txt created. Open it and fill in the required fields.")
                 return
         else:
@@ -153,21 +153,6 @@ def main():
         print(a_self.name, "does not exist. Please check the assignment name.")
         return
     
-    # Check that final grade assignment exists. If not prompt to create one.
-    try:
-        a_final = course.get_assignments(search_term=assignment_name + " - " + config["final_suffix"])[0]
-        print(a_final.name, 'exists.')
-    except IndexError as e:
-        create_final = input(a_final.name, "does not exist. Create it now? (y/n)")
-        if create_final.lower() == 'y':
-            a_final = course.create_assignment({
-                'name': assignment_name + " - " + config["final_suffix"],
-                'points_possible': total_point_val
-            })
-            print(a_final.name, 'created. You must publish it on Canvas before proceeding.')
-        else:
-            a_final = None
-
     # Get point values of quiz questions corresponding to Problems
     q_probs = course.get_quiz(a_self.quiz_id).get_questions()
     p_point_vals = {q.id:q.points_possible for q in q_probs if config["problem_prefix"] in q.question_name}
@@ -217,7 +202,7 @@ def main():
                 df_scores.loc[user.id, "error"] = msg
 
             if args.verbose:
-                print(f"Processing {user.name}...")
+                print(f"Fetching scores for {user.name}...")
 
             # Update or create new row for current student
             df_scores.loc[user.id, "name"] = user.name
@@ -305,8 +290,22 @@ def main():
 
     # Enter final grades into Canvas gradebook
     if args.upload:
-        if a_final is None:
-            print("No final grade assignment found. Please create one before uploading scores.")
+
+        # Check that final grade assignment exists. If not prompt to create one.
+        try:
+            a_final = course.get_assignments(search_term=assignment_name + " - " + config["final_suffix"])[0]
+            print(a_final.name, 'exists.')
+        except IndexError as e:
+            create_final = input(a_final.name, "does not exist. Create it now? (y/n)")
+            if create_final.lower() == 'y':
+                a_final = course.create_assignment({
+                    'name': assignment_name + " - " + config["final_suffix"],
+                    'points_possible': total_point_val
+                })
+                print(a_final.name, 'created. You must publish it on Canvas before proceeding.')
+            else:
+                print("Exiting.")
+            
             return
 
         # Read scores from CSV
@@ -314,12 +313,12 @@ def main():
         df_scores["checked"] = df_scores["checked"].fillna(False)
 
         # Calculate total scores
-        calc_final_scores(df_scores)
+        df_scores = calc_final_scores(df_scores)
 
         # Upload scores for all rows marked "Checked"
         for user_id, row in df_scores[df_scores["checked"]].iterrows():
             if args.verbose:
-                print(f" * Uploading final score for {user_id}: {row['final_score']}")
+                print(f"Uploading score for {row['name']}: {row['final_score']}")
 
             s_final = a_final.get_submission(user_id)
             s_final.edit(submission={'posted_grade': row["final_score"]})
