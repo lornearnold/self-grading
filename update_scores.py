@@ -4,20 +4,36 @@
 """Update Canvas grades for a student-graded assignment."""
 
 import json
+from pprint import pprint
+import os
 import pandas as pd
 from numpy import argmax
 from itertools import chain
 from canvasapi import Canvas
 from argparse import ArgumentParser
 
+def calc_final_scores(df):
+    """Calculate final scores for each student, including instructor check scores."""
+
+    scores_i = df.loc[:, df.columns.str.endswith("_i")]
+    scores_i.columns = scores_i.columns.str.removesuffix("_i")
+
+    scores_s = df.loc[:, df.columns.str.endswith("_s")]
+    scores_s.columns = scores_s.columns.str.removesuffix("_s")
+
+    df["student_score"] = scores_s.sum(axis=1)
+    df["final_score"] = scores_i.fillna(scores_s).sum(axis=1)
+
+    return df
 
 def main():
     parser = ArgumentParser(description="Update Canvas grades for a student-graded assignment.")
     parser.add_argument("-c", "--course_id", help="Canvas course ID", type=int)
     parser.add_argument("-a", "--assignment_id", help="Canvas assignment ID", type=int)
+    parser.add_argument("-p", "--check_problem", help="Check Problem name (e.g. 'Problem 3')")
     parser.add_argument("-f", "--fetch", help="Fetch scores from Canvas", action="store_true")
     parser.add_argument("-u", "--upload", help="Upload scores to Canvas", action="store_true")
-    parser.add_argument("-p", "--check_problem", help="Check Problem name (e.g. 'Problem 3')")
+    parser.add_argument("-o", "--overwrite", help="Overwrite existing instructor scores", action="store_true")
     parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
     args = parser.parse_args()
 
@@ -37,12 +53,14 @@ def main():
             with open("config.txt", "w") as f:
                 json.dump({
                     "api_key": "ENTER YOUR API KEY",
-                    "canvas_url": "https://canvas.yourinstitution.edu",
+                    "canvas_url": "https://canvas.myinstitution.edu",
                     "course_id": 123,
                     "submission_suffix": "submit your work",
                     "score_suffix": "grade your work",
                     "final_suffix": "final grade",
                     "problem_prefix": "Problem"}, f)
+                print("config.txt created. Open it and fill in the required fields.")
+                return
         else:
             print("Exiting.")
             return
@@ -172,50 +190,101 @@ def main():
 
     # Fetch scores from Canvas
     if args.fetch:
-        # Create empty dataframe of student scores
-        p_cols = list(chain.from_iterable([[p + "_s", p + "_i"] for p in p_names.values()]))
-        df_scores = pd.DataFrame(columns=["name", "status"] + p_cols + ["student_score", "final_score"])
+
+        # Check for existing scores file
+        if os.path.exists(f"{assignment_name}_scores.csv"):
+            if args.verbose:
+                print(f"Loading existing scores from {assignment_name}_scores.csv")
+            df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0)
+            df_scores["checked"] = df_scores["checked"].fillna(False)
+        else:
+            # Create empty dataframe of student scores
+            if args.verbose:
+                print(f"Creating empty scores dataframe for {assignment_name}")
+            
+            p_cols = list(chain.from_iterable([[p + "_s", p + "_i"] for p in p_names.values()]))
+            cols = (["name", "hw_id", "grade_id", "checked"] +
+                    p_cols + ["student_score", "final_score", "error"])
+            df_scores = pd.DataFrame(columns=cols)
+            df_scores["checked"] = False
 
         # For each student...
-        i = 0
         for user in course.get_users(enrollment_type=['student']):
-            if i == 5:
-                break
-            else:
-                i += 1
 
             def log_error(msg):
                 if args.verbose:
                     print(f"Error for {user.name}: {msg}")
-                    df_scores.loc[user.id, "status"] = msg
+                df_scores.loc[user.id, "error"] = msg
 
-            # Create new row for current student
+            if args.verbose:
+                print(f"Processing {user.name}...")
+
+            # Update or create new row for current student
             df_scores.loc[user.id, "name"] = user.name
 
-            # Get self grade submission history (includes all attempts)
-            s = a_self.get_submission(user=user.id, include='submission_history')
-
-            # Get latest submission
-            sh_index = argmax([sh['attempt'] for sh in s.submission_history])
-            sh_latest = s.submission_history[sh_index]
-
-            if "submission_data" not in sh_latest:
-                log_error("No student-submitted grade found.")
+            # Check whether the student has submitted the assignment
+            hw_sub = a_submit.get_submission(user=user.id)
+            if hw_sub is None:
+                log_error(" * No submission found.")
                 continue
 
-            # Get instructor score
+            # Check if there was an existing assignment submission
+            if pd.notnull(df_scores.loc[user.id, "hw_id"]):
+                if hw_sub.id != df_scores.loc[user.id, "hw_id"]:
+                    # New submission. Prompt to clear instructor scores
+                    if args.verbose:
+                        print(f" * New HW submission found")
+
+                    overwrite = args.overwrite
+                    if not args.overwrite:  # Prompt for overwrite
+                        clear_scores = input(f" * Clear ALL instructor scores for {user.name}? (y/n) ")
+                        overwrite = clear_scores.lower() == "y"
+
+                    if overwrite:
+                        if args.verbose:
+                            print(" * Overwriting instructor scores")
+
+                        # Clear all fields in df_scores ending in "_i"
+                        df_scores.loc[user.id, df_scores.columns.str.endswith("_i")] = None
+
+                        # Set CHECKED column to False
+                        df_scores.loc[user.id, "checked"] = False
+
+            # Fetch instructor score
             inst_evaluation = a_submit.get_submission(user=user.id)
 
             if inst_evaluation.grade is not None:
                 df_scores.loc[user.id, p_names[check_problem_id] + "_i"] = float(inst_evaluation.grade)
             else:
-                log_error('No instructor grade found for student')
+                log_error(" * No instructor score found.")
+            
+            # Update submission ID
+            df_scores.loc[user.id, "hw_id"] = hw_sub.id
 
-            student_final_score = 0
-            final_score = 0
+            # Get self grade submission
+            grade_sub = a_self.get_submission(user=user.id, include=["submission_history"])
+
+            # Get latest submission
+            s_index = argmax([sh['attempt'] for sh in grade_sub.submission_history])
+            s_latest = grade_sub.submission_history[s_index]
+
+            if 'submission_data' not in s_latest:
+                log_error(" * No student grade submission found.")
+                continue
+
+            # Check if grade submission is new
+            if pd.notnull(df_scores.loc[user.id, "grade_id"]):
+                if s_latest["id"] != df_scores.loc[user.id, "grade_id"]:
+                    if args.verbose:
+                        print(f" * New student grade submission found.")
+
+                    df_scores.loc[user.id, "checked"] = False
+
+            # Update grade submission ID
+            df_scores.loc[user.id, "grade_id"] = s_latest["id"]
 
             # Get student-submitted scores for each problem
-            for q in sh_latest["submission_data"]:    # Loop over quiz questions
+            for q in s_latest["submission_data"]:     # Loop over quiz questions
                 if q["question_id"] in p_point_vals:  # If Problem
                     p_name = p_names[q["question_id"]]
                     student_score = float(q["text"])  # Student's entered score
@@ -228,19 +297,32 @@ def main():
                         log_error(f"Student entered a score less than zero for {p_name}.")
                         continue
 
-                    student_final_score += student_score
-
-                    if q["question_id"] == check_problem_id:
-                        final_score += float(inst_evaluation.grade)
-                    else:
-                        final_score += student_score
-
-            df_scores.loc[user.id, "student_score"] = student_final_score
-            df_scores.loc[user.id, "final_score"] = final_score
+        # Calculate total scores
+        df_scores = calc_final_scores(df_scores)
 
         # Save scores to CSV
         df_scores.to_csv(f"{assignment_name}_scores.csv")
 
+    # Enter final grades into Canvas gradebook
+    if args.upload:
+        if a_final is None:
+            print("No final grade assignment found. Please create one before uploading scores.")
+            return
+
+        # Read scores from CSV
+        df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0)
+        df_scores["checked"] = df_scores["checked"].fillna(False)
+
+        # Calculate total scores
+        calc_final_scores(df_scores)
+
+        # Upload scores for all rows marked "Checked"
+        for user_id, row in df_scores[df_scores["checked"]].iterrows():
+            if args.verbose:
+                print(f" * Uploading final score for {user_id}: {row['final_score']}")
+
+            s_final = a_final.get_submission(user_id)
+            s_final.edit(submission={'posted_grade': row["final_score"]})
 
 if __name__ == "__main__":
     main()
