@@ -166,7 +166,11 @@ def main():
         if os.path.exists(f"{assignment_name}_scores.csv"):
             if args.verbose:
                 print(f"Loading existing scores from {assignment_name}_scores.csv")
-            df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0)
+
+            df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0,
+                                    dtype={"checked": "boolean"},
+                                   true_values=["TRUE", "True", "T", "1", "YES", "Y"],
+                                   false_values=["FALSE", "False", "F", "0", "NO", "N"])
             df_scores["checked"] = df_scores["checked"].fillna(False)
         else:
             # Create empty dataframe of student scores
@@ -311,7 +315,10 @@ def main():
             return
 
         # Read scores from CSV
-        df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0)
+        df_scores = pd.read_csv(f"{assignment_name}_scores.csv", index_col=0,
+                                 dtype={"checked": "boolean"},
+                                 true_values=["TRUE", "True", "T", "1", "YES", "Y"],
+                                 false_values=["FALSE", "False", "F", "0", "NO", "N"])
         df_scores["checked"] = df_scores["checked"].fillna(False)
 
         # Calculate total scores
